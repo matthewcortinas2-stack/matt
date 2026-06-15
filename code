@@ -1,0 +1,565 @@
+/* 
+ * ============================================================ 
+ *   DUNGEON OF ECHOES — A Text Adventure RPG in C++ 
+ * ============================================================ 
+ * Topics covered: 
+ *   - Control Structures  : if/else, switch, for, while, do-while 
+ *   - Functions           : modular helpers, game logic, display 
+ *   - Arrays              : inventory, enemy roster, room map 
+ *   - Array Pointers      : pointer traversal, passing arrays 
+ *   - Strings             : player name, item names, room descriptions 
+ *   - cctype Library      : input validation and formatting 
+ * ============================================================ 
+ */ 
+ 
+#include <iostream> 
+#include <string> 
+#include <cstring>   // strcpy, strlen, strcmp 
+#include <cctype>    // toupper, tolower, isalpha, isdigit, isspace 
+#include <cstdlib>   // rand, srand 
+#include <ctime>     // time 
+using namespace std; 
+ 
+// ─── Constants ─────────────────────────────────────────────── 
+const int MAX_INVENTORY = 6; 
+const int NUM_ROOMS     = 5; 
+const int NUM_ENEMIES   = 4; 
+const int NAME_LEN      = 30; 
+ 
+// ─── Structs ───────────────────────────────────────────────── 
+struct Item { 
+    char name[NAME_LEN]; 
+    int  healAmount;   // 0 = weapon/armour, >0 = potion 
+    int  attackBonus; 
+}; 
+ 
+struct Enemy { 
+    char name[NAME_LEN]; 
+    int  hp; 
+    int  maxHp; 
+    int  attack; 
+    bool alive; 
+}; 
+ 
+struct Player { 
+    char name[NAME_LEN]; 
+    int  hp; 
+    int  maxHp; 
+    int  attack; 
+    int  gold; 
+    int  currentRoom; 
+    Item inventory[MAX_INVENTORY]; 
+    int  itemCount; 
+}; 
+ 
+struct Room { 
+    char description[120]; 
+    bool hasEnemy; 
+    bool hasItem; 
+    bool visited; 
+    int  enemyIndex;   // index into global enemy array 
+    Item loot; 
+}; 
+ 
+// ─── Global Game State ─────────────────────────────────────── 
+Enemy enemies[NUM_ENEMIES] = { 
+    {"Goblin",        20, 20, 4,  true}, 
+    {"Skeleton",      30, 30, 6,  true}, 
+    {"Dark Knight",   50, 50, 10, true}, 
+    {"Shadow Wraith", 40, 40, 8,  true} 
+}; 
+ 
+Room rooms[NUM_ROOMS]; 
+ 
+// ─── Function Prototypes ───────────────────────────────────── 
+void        initRooms(); 
+void        initPlayer(Player &p); 
+void        printSeparator(char ch, int len); 
+void        printTitle(); 
+void        showStatus(const Player &p); 
+void        showInventory(const Player &p); 
+void        describeRoom(const Player &p); 
+void        pickUpItem(Player &p, Room &r); 
+bool        useItem(Player &p); 
+void        combatLoop(Player &p, Enemy &e); 
+int         playerAttack(const Player &p); 
+void        shopMenu(Player &p); 
+void        gameLoop(Player &p); 
+bool        checkVictory(const Player &p); 
+string      capitalize(const string &s); 
+bool        isValidName(const char *s); 
+void        printEnemyHpBar(const Enemy &e); 
+ 
+// ─── cctype Helpers ────────────────────────────────────────── 
+ 
+// Capitalize first letter of each word using cctype 
+string capitalize(const string &s) { 
+    string result = s; 
+    bool newWord = true; 
+    for (size_t i = 0; i < result.size(); ++i) { 
+        if (isspace((unsigned char)result[i])) { 
+            newWord = true; 
+        } else if (newWord) { 
+            result[i] = (char)toupper((unsigned char)result[i]); 
+            newWord = false; 
+        } else { 
+            result[i] = (char)tolower((unsigned char)result[i]); 
+        } 
+    } 
+    return result; 
+} 
+ 
+// Validate that a name contains only letters and spaces (cctype: isalpha, isspace) 
+bool isValidName(const char *s) { 
+    if (strlen(s) == 0) return false; 
+    for (int i = 0; s[i] != '\0'; ++i) { 
+        if (!isalpha((unsigned char)s[i]) && !isspace((unsigned char)s[i])) 
+            return false; 
+    } 
+    return true; 
+} 
+ 
+// ─── Initialisation ────────────────────────────────────────── 
+ 
+void initRooms() { 
+    // Room 0 — Entry Hall 
+    strcpy(rooms[0].description, "The Entry Hall: cold stone walls, a rusted portcullis behind you."); 
+    rooms[0].hasEnemy  = true; 
+    rooms[0].hasItem   = false; 
+    rooms[0].visited   = false; 
+    rooms[0].enemyIndex = 0; // Goblin 
+    strcpy(rooms[0].loot.name, ""); 
+ 
+    // Room 1 — Armory 
+    strcpy(rooms[1].description, "The Armory: weapon racks line the walls, most blades broken."); 
+    rooms[1].hasEnemy  = false; 
+    rooms[1].hasItem   = true; 
+    rooms[1].visited   = false; 
+    rooms[1].enemyIndex = -1; 
+    strcpy(rooms[1].loot.name, "Iron Sword"); 
+    rooms[1].loot.healAmount  = 0; 
+    rooms[1].loot.attackBonus = 5; 
+ 
+    // Room 2 — Crypt 
+    strcpy(rooms[2].description, "The Crypt: coffins split open, bones scattered across the floor."); 
+    rooms[2].hasEnemy  = true; 
+    rooms[2].hasItem   = true; 
+    rooms[2].visited   = false; 
+    rooms[2].enemyIndex = 1; // Skeleton 
+    strcpy(rooms[2].loot.name, "Health Potion"); 
+    rooms[2].loot.healAmount  = 25; 
+    rooms[2].loot.attackBonus = 0; 
+ 
+    // Room 3 — Shadow Corridor 
+    strcpy(rooms[3].description, "The Shadow Corridor: torches flicker and die as you step inside."); 
+    rooms[3].hasEnemy  = true; 
+    rooms[3].hasItem   = true; 
+    rooms[3].visited   = false; 
+    rooms[3].enemyIndex = 3; // Shadow Wraith 
+    strcpy(rooms[3].loot.name, "Shadow Cloak"); 
+    rooms[3].loot.healAmount  = 0; 
+    rooms[3].loot.attackBonus = 3; 
+ 
+    // Room 4 — Throne Room (boss) 
+    strcpy(rooms[4].description, "The Throne Room: a dark figure sits motionless on a cracked obsidian throne."); 
+    rooms[4].hasEnemy  = true; 
+    rooms[4].hasItem   = false; 
+    rooms[4].visited   = false; 
+    rooms[4].enemyIndex = 2; // Dark Knight 
+    strcpy(rooms[4].loot.name, ""); 
+} 
+ 
+void initPlayer(Player &p) { 
+    p.hp         = 80; 
+    p.maxHp      = 80; 
+    p.attack     = 8; 
+    p.gold        = 10; 
+    p.currentRoom = 0; 
+    p.itemCount   = 1; 
+ 
+    // Starting item 
+    strcpy(p.inventory[0].name, "Small Potion"); 
+    p.inventory[0].healAmount  = 15; 
+    p.inventory[0].attackBonus = 0; 
+} 
+ 
+// ─── Display Helpers ───────────────────────────────────────── 
+ 
+void printSeparator(char ch, int len) { 
+    for (int i = 0; i < len; ++i) cout << ch; 
+    cout << "\n"; 
+} 
+ 
+void printTitle() { 
+    printSeparator('=', 54); 
+    cout << "       D U N G E O N   O F   E C H O E S\n"; 
+    printSeparator('=', 54); 
+    cout << "  A C++ Text Adventure  |  Survive the darkness.\n"; 
+    printSeparator('=', 54); 
+    cout << "\n"; 
+} 
+ 
+void showStatus(const Player &p) { 
+    printSeparator('-', 40); 
+    cout << " Hero : " << p.name << "\n"; 
+    cout << " HP   : " << p.hp << " / " << p.maxHp << "\n"; 
+    cout << " ATK  : " << p.attack << "   GOLD: " << p.gold << "\n"; 
+    cout << " Room : " << p.currentRoom + 1 << " / " << NUM_ROOMS << "\n"; 
+    printSeparator('-', 40); 
+} 
+ 
+void showInventory(const Player &p) { 
+    printSeparator('-', 40); 
+    cout << " INVENTORY (" << p.itemCount << "/" << MAX_INVENTORY << ")\n"; 
+    printSeparator('-', 40); 
+    if (p.itemCount == 0) { 
+        cout << "  (empty)\n"; 
+        return; 
+    } 
+    // Pointer traversal of inventory array 
+    const Item *ptr = p.inventory; 
+    for (int i = 0; i < p.itemCount; ++i, ++ptr) { 
+        cout << "  [" << i + 1 << "] " << ptr->name; 
+        if (ptr->healAmount > 0) 
+            cout << "  (Heals " << ptr->healAmount << " HP)"; 
+        if (ptr->attackBonus > 0) 
+            cout << "  (+" << ptr->attackBonus << " ATK)"; 
+        cout << "\n"; 
+    } 
+    printSeparator('-', 40); 
+} 
+ 
+void printEnemyHpBar(const Enemy &e) { 
+    int barLen = 20; 
+    int filled = (e.hp * barLen) / e.maxHp; 
+    cout << "  " << e.name << " HP ["; 
+    for (int i = 0; i < barLen; ++i) 
+        cout << (i < filled ? '#' : '.'); 
+    cout << "] " << e.hp << "/" << e.maxHp << "\n"; 
+} 
+ 
+void describeRoom(const Player &p) { 
+    const Room &r = rooms[p.currentRoom]; 
+    cout << "\n"; 
+    printSeparator('~', 54); 
+    cout << "  " << r.description << "\n"; 
+    printSeparator('~', 54); 
+ 
+    if (r.hasEnemy && enemies[r.enemyIndex].alive) 
+        cout << "  !! A " << enemies[r.enemyIndex].name << " blocks your path!\n"; 
+    if (r.hasItem && strlen(r.loot.name) > 0) 
+        cout << "  >> You spot: " << r.loot.name << " on the ground.\n"; 
+    if (!r.hasEnemy || !enemies[r.enemyIndex].alive) 
+        cout << "  The room is clear.\n"; 
+} 
+ 
+// ─── Item Logic ────────────────────────────────────────────── 
+ 
+void pickUpItem(Player &p, Room &r) { 
+    if (!r.hasItem || strlen(r.loot.name) == 0) { 
+        cout << "  Nothing to pick up here.\n"; 
+        return; 
+    } 
+    if (p.itemCount >= MAX_INVENTORY) { 
+        cout << "  Your inventory is full! Drop something first.\n"; 
+        return; 
+    } 
+    // Copy loot into inventory using pointer arithmetic 
+    Item *slot = p.inventory + p.itemCount; 
+    *slot = r.loot; 
+ 
+    // Apply permanent attack bonus immediately 
+    if (slot->attackBonus > 0) { 
+        p.attack += slot->attackBonus; 
+        cout << "  Equipped " << slot->name << "! ATK +" << slot->attackBonus << "\n"; 
+    } else { 
+        cout << "  Picked up " << slot->name << ".\n"; 
+    } 
+ 
+    p.itemCount++; 
+    r.hasItem = false; 
+    memset(r.loot.name, 0, NAME_LEN); 
+} 
+ 
+// Use a consumable potion from inventory; returns true if used 
+bool useItem(Player &p) { 
+    showInventory(p); 
+    if (p.itemCount == 0) return false; 
+ 
+    cout << "  Use which item? (1-" << p.itemCount << ", 0 to cancel): "; 
+    int choice; 
+    cin >> choice; 
+    if (choice < 1 || choice > p.itemCount) return false; 
+ 
+    Item *item = p.inventory + (choice - 1); 
+ 
+    if (item->healAmount <= 0) { 
+        cout << "  " << item->name << " can't be used mid-battle!\n"; 
+        return false; 
+    } 
+ 
+    int healed = item->healAmount; 
+    p.hp = (p.hp + healed > p.maxHp) ? p.maxHp : p.hp + healed; 
+    cout << "  You drink the " << item->name << " and restore " << healed << " HP!\n"; 
+ 
+    // Remove item: shift array left using pointer 
+    Item *dest = p.inventory + (choice - 1); 
+    Item *src  = dest + 1; 
+    for (int i = choice - 1; i < p.itemCount - 1; ++i, ++dest, ++src) 
+        *dest = *src; 
+    p.itemCount--; 
+    return true; 
+} 
+ 
+// ─── Combat ────────────────────────────────────────────────── 
+ 
+int playerAttack(const Player &p) { 
+    return p.attack + (rand() % 5);  // base attack + random 0-4 
+} 
+ 
+void combatLoop(Player &p, Enemy &e) { 
+    cout << "\n"; 
+    printSeparator('*', 54); 
+    cout << "  COMBAT: " << p.name << "  vs  " << e.name << "!\n"; 
+    printSeparator('*', 54); 
+ 
+    while (p.hp > 0 && e.hp > 0) { 
+        // Show HP bars 
+        cout << "  Your HP: " << p.hp << "/" << p.maxHp << "\n"; 
+        printEnemyHpBar(e); 
+ 
+        // Player turn 
+        cout << "\n  [1] Attack  [2] Use Item  [3] Flee\n  > "; 
+        int action; 
+        cin >> action; 
+ 
+        switch (action) { 
+            case 1: { 
+                int dmg = playerAttack(p); 
+                e.hp -= dmg; 
+                if (e.hp < 0) e.hp = 0; 
+                cout << "  You strike " << e.name << " for " << dmg << " damage!\n"; 
+                break; 
+            } 
+            case 2: 
+                useItem(p); 
+                break; 
+            case 3: 
+                cout << "  You flee back to safety!\n"; 
+                p.currentRoom = (p.currentRoom > 0) ? p.currentRoom - 1 : 0; 
+                return; 
+            default: 
+                cout << "  Invalid action — you hesitate!\n"; 
+        } 
+ 
+        // Enemy turn (if still alive) 
+        if (e.hp > 0) { 
+            int enemyDmg = e.attack + (rand() % 4); 
+            p.hp -= enemyDmg; 
+            if (p.hp < 0) p.hp = 0; 
+            cout << "  " << e.name << " attacks you for " << enemyDmg << " damage!\n"; 
+        } 
+        cout << "\n"; 
+    } 
+ 
+    if (e.hp <= 0) { 
+        e.alive = false; 
+        int reward = 5 + rand() % 10; 
+        p.gold += reward; 
+        cout << "  " << e.name << " has been defeated! You earn " << reward << " gold.\n"; 
+        printSeparator('*', 54); 
+    } else { 
+        cout << "  You have been slain...\n"; 
+        printSeparator('*', 54); 
+    } 
+} 
+ 
+// ─── Shop ──────────────────────────────────────────────────── 
+ 
+void shopMenu(Player &p) { 
+    // Only available in room 1 (Armory) when cleared 
+    if (p.currentRoom != 1) { 
+        cout << "  There is no shop here.\n"; 
+        return; 
+    } 
+    printSeparator('=', 40); 
+    cout << "  MERCHANT: \"What'll it be, traveler?\"\n"; 
+    printSeparator('=', 40); 
+    cout << "  [1] Health Potion   (20g) — Heals 30 HP\n"; 
+    cout << "  [2] Elixir          (35g) — Heals 50 HP\n"; 
+    cout << "  [0] Leave shop\n"; 
+    cout << "  Your gold: " << p.gold << "g\n  > "; 
+ 
+    int choice; 
+    cin >> choice; 
+ 
+    // Lambda-style: build item on the fly and add 
+    Item bought; 
+    bought.attackBonus = 0; 
+    bool valid = true; 
+ 
+    switch (choice) { 
+        case 1: 
+            if (p.gold < 20) { cout << "  Not enough gold!\n"; valid = false; break; } 
+            strcpy(bought.name, "Health Potion"); 
+            bought.healAmount = 30; 
+            p.gold -= 20; 
+            break; 
+        case 2: 
+            if (p.gold < 35) { cout << "  Not enough gold!\n"; valid = false; break; } 
+            strcpy(bought.name, "Elixir"); 
+            bought.healAmount = 50; 
+            p.gold -= 35; 
+            break; 
+        case 0: 
+            return; 
+        default: 
+            cout << "  Unknown option.\n"; 
+            valid = false; 
+    } 
+ 
+    if (valid) { 
+        if (p.itemCount >= MAX_INVENTORY) { 
+            cout << "  Inventory full — can't buy!\n"; 
+        } else { 
+            p.inventory[p.itemCount++] = bought; 
+            cout << "  Bought " << bought.name << "!\n"; 
+        } 
+    } 
+} 
+ 
+// ─── Victory Check ─────────────────────────────────────────── 
+ 
+bool checkVictory(const Player & /*p*/) { 
+    // Win: Dark Knight (enemy 2) is dead 
+    return !enemies[2].alive; 
+} 
+ 
+// ─── Main Game Loop ────────────────────────────────────────── 
+ 
+void gameLoop(Player &p) { 
+    bool running = true; 
+ 
+    while (running && p.hp > 0) { 
+        if (!rooms[p.currentRoom].visited) { 
+            rooms[p.currentRoom].visited = true; 
+        } 
+        describeRoom(p); 
+        showStatus(p); 
+ 
+        Room &cur = rooms[p.currentRoom]; 
+ 
+        // Auto-trigger combat if enemy is alive in room 
+        if (cur.hasEnemy && enemies[cur.enemyIndex].alive) { 
+            cout << "  Press ENTER to engage...\n"; 
+            cin.ignore(); 
+            cin.get(); 
+            combatLoop(p, enemies[cur.enemyIndex]); 
+            if (p.hp <= 0) break; 
+        } 
+ 
+        // Check for victory 
+        if (checkVictory(p)) break; 
+ 
+        // Main menu 
+        cout << "\n  [1] Move Forward   [2] Move Back\n"; 
+        cout << "  [3] Pick Up Item   [4] Use Item\n"; 
+        cout << "  [5] Inventory      [6] Shop\n"; 
+        cout << "  [0] Quit\n  > "; 
+ 
+        int cmd; 
+        cin >> cmd; 
+ 
+        switch (cmd) { 
+            case 1: 
+                if (p.currentRoom < NUM_ROOMS - 1) { 
+                    p.currentRoom++; 
+                    cout << "  You move deeper into the dungeon...\n"; 
+                } else { 
+                    cout << "  There is no way forward — the wall is solid stone.\n"; 
+                } 
+                break; 
+            case 2: 
+                if (p.currentRoom > 0) { 
+                    p.currentRoom--; 
+                    cout << "  You retreat to the previous room.\n"; 
+                } else { 
+                    cout << "  The portcullis is sealed. No going back.\n"; 
+                } 
+                break; 
+            case 3: 
+                pickUpItem(p, cur); 
+                break; 
+            case 4: 
+                useItem(p); 
+                break; 
+            case 5: 
+                showInventory(p); 
+                break; 
+            case 6: 
+                shopMenu(p); 
+                break; 
+            case 0: 
+                cout << "  You abandon your quest...\n"; 
+                running = false; 
+                break; 
+            default: 
+                cout << "  Unknown command.\n"; 
+        } 
+    } 
+} 
+ 
+// ─── Entry Point ───────────────────────────────────────────── 
+ 
+int main() { 
+    srand((unsigned)time(nullptr)); 
+ 
+    printTitle(); 
+ 
+    // ── Get player name using cctype validation ── 
+    char rawName[NAME_LEN]; 
+    do { 
+        cout << "  Enter your hero's name: "; 
+        cin.getline(rawName, NAME_LEN); 
+ 
+        // Trim leading spaces with pointer arithmetic + isspace 
+        char *start = rawName; 
+        while (*start && isspace((unsigned char)*start)) ++start; 
+ 
+        // Convert to uppercase first letter with toupper (cctype) 
+        string nameStr = capitalize(string(start)); 
+        strncpy(rawName, nameStr.c_str(), NAME_LEN - 1); 
+        rawName[NAME_LEN - 1] = '\0'; 
+ 
+        if (!isValidName(rawName)) 
+            cout << "  Name must contain only letters. Try again.\n"; 
+ 
+    } while (!isValidName(rawName)); 
+ 
+    cout << "\n  Welcome, " << rawName << "! The dungeon awaits...\n\n"; 
+ 
+    // Initialise everything 
+    Player hero; 
+    strcpy(hero.name, rawName); 
+    initPlayer(hero); 
+    initRooms(); 
+ 
+    // Run the game 
+    gameLoop(hero); 
+ 
+    // Outcome 
+    cout << "\n"; 
+    printSeparator('=', 54); 
+    if (hero.hp <= 0) { 
+        cout << "  GAME OVER — " << hero.name << " fell in the darkness.\n"; 
+    } else if (checkVictory(hero)) { 
+        cout << "  VICTORY! " << hero.name << " has slain the Dark Knight!\n"; 
+        cout << "  The Dungeon of Echoes falls silent at last.\n"; 
+    } else { 
+        cout << "  " << hero.name << " retreats. The dungeon remains unconquered.\n"; 
+    } 
+    cout << "  Final Gold: " << hero.gold << "g\n"; 
+    printSeparator('=', 54); 
+ 
+    return 0; 
+}
